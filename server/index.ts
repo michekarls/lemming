@@ -10,6 +10,15 @@ app.use(express.json());
 
 const anthropic = new Anthropic();
 
+// Strip citation tags from web search results
+function stripCitations(text: string): string {
+  return text
+    .replace(/<cite[^>]*>/g, '')
+    .replace(/<\/cite>/g, '')
+    .replace(/<source[^>]*>/g, '')
+    .replace(/<\/source>/g, '');
+}
+
 // Fetch and translate a news article to B1 Spanish
 app.post('/api/fetch-article', async (req, res) => {
   try {
@@ -71,6 +80,12 @@ OUTPUT FORMAT (respond with ONLY this JSON, no other text):
     }
 
     const article = JSON.parse(jsonMatch[0]);
+
+    // Strip citation tags from all text fields
+    article.title = stripCitations(article.title || '');
+    article.titleSpanish = stripCitations(article.titleSpanish || '');
+    article.originalSource = stripCitations(article.originalSource || '');
+    article.spanishContent = stripCitations(article.spanishContent || '');
     article.fetchedAt = new Date().toISOString();
 
     res.json(article);
@@ -127,6 +142,11 @@ Respond with ONLY this JSON format, no other text:
     }
 
     const translation = JSON.parse(jsonMatch[0]);
+
+    // Strip any citation tags
+    translation.translation = stripCitations(translation.translation || '');
+    translation.contextTranslation = stripCitations(translation.contextTranslation || '');
+
     res.json(translation);
   } catch (error) {
     console.error('Error translating word:', error);
