@@ -8,11 +8,52 @@ interface ArticleReaderProps {
 }
 
 function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
+  // Find the sentence context from a selection or element
+  const findSentenceContext = useCallback((element: Element | null): string => {
+    // Walk up to find the sentence span (direct child of <p>)
+    let current = element;
+    while (current && current.parentElement?.tagName !== 'P') {
+      current = current.parentElement;
+    }
+    return current?.textContent?.trim() || '';
+  }, []);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim();
+
+    if (selectedText && selectedText.length > 0) {
+      // User selected text (phrase or word)
+      const range = selection?.getRangeAt(0);
+      if (range) {
+        const rect = range.getBoundingClientRect();
+        const position = {
+          x: rect.left + rect.width / 2,
+          y: rect.bottom + 8,
+        };
+        // Get sentence context from the start of the selection
+        const sentence = findSentenceContext(range.startContainer.parentElement);
+        onWordClick(selectedText, sentence, position);
+        selection?.removeAllRanges();
+      }
+    }
+  }, [onWordClick, findSentenceContext]);
+
   const handleWordClick = useCallback((
     e: React.MouseEvent<HTMLSpanElement>,
     word: string,
     sentence: string
   ) => {
+    // Only handle single clicks (no selection)
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim();
+
+    if (selectedText && selectedText.length > 0) {
+      // Selection will be handled by mouseUp
+      return;
+    }
+
+    // Single word click
     const rect = e.currentTarget.getBoundingClientRect();
     const position = {
       x: rect.left + rect.width / 2,
@@ -84,7 +125,7 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         </div>
       </header>
 
-      <div className="article-content">
+      <div className="article-content" onMouseUp={handleMouseUp}>
         {renderContent()}
       </div>
     </article>

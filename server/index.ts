@@ -16,7 +16,9 @@ function stripCitations(text: string): string {
     .replace(/<cite[^>]*>/g, '')
     .replace(/<\/cite>/g, '')
     .replace(/<source[^>]*>/g, '')
-    .replace(/<\/source>/g, '');
+    .replace(/<\/source>/g, '')
+    .replace(/\s{2,}/g, ' ')  // Collapse multiple spaces to single space
+    .trim();
 }
 
 // Fetch and translate a news article to B1 Spanish
@@ -104,21 +106,22 @@ app.post('/api/translate-word', async (req, res) => {
       return res.status(400).json({ error: 'Word and sentence are required' });
     }
 
+    const isPhrase = word.includes(' ');
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 500,
       messages: [
         {
           role: 'user',
-          content: `Translate this Spanish word to English, considering its context.
+          content: `Translate this Spanish ${isPhrase ? 'phrase' : 'word'} to English, considering its context.
 
-WORD: "${word}"
+${isPhrase ? 'PHRASE' : 'WORD'}: "${word}"
 CONTEXT SENTENCE: "${sentence}"
 
 Respond with ONLY this JSON format, no other text:
 {
   "word": "${word}",
-  "translation": "English translation of the word (just the word, not the sentence)",
+  "translation": "English translation of the ${isPhrase ? 'phrase' : 'word'} (just the ${isPhrase ? 'phrase' : 'word'}, not the full sentence)",
   "context": "${sentence}",
   "contextTranslation": "Full English translation of the context sentence"
 }`
