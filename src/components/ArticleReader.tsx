@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { Article } from '../types';
 
 interface ArticleReaderProps {
@@ -7,113 +7,111 @@ interface ArticleReaderProps {
   savedWords: string[];
 }
 
-interface WordInfo {
-  word: string;
-  sentence: string;
-  element: HTMLSpanElement;
-}
-
 function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const wordMapRef = useRef<Map<string, WordInfo>>(new Map());
   const isDraggingRef = useRef(false);
   const dragStartIdRef = useRef<string | null>(null);
   const dragEndIdRef = useRef<string | null>(null);
-  const orderedWordIdsRef = useRef<string[]>([]);
 
-  // Get word ID from a DOM element
-  const getWordIdFromElement = useCallback((element: Element | null): string | null => {
-    if (!element) return null;
-    const wordEl = element.closest('[data-word-id]');
-    return wordEl?.getAttribute('data-word-id') || null;
-  }, []);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
 
-  // Update selection highlighting
-  const updateSelectionHighlight = useCallback(() => {
-    const startId = dragStartIdRef.current;
-    const endId = dragEndIdRef.current;
+    const getWordIdFromElement = (element: Element | null): string | null => {
+      if (!element) return null;
+      const wordEl = element.closest('[data-word-id]');
+      return wordEl?.getAttribute('data-word-id') || null;
+    };
 
-    // Clear all selections first
-    wordMapRef.current.forEach((info) => {
-      info.element.classList.remove('selecting');
-    });
+    const getAllWordElements = (): HTMLElement[] => {
+      return Array.from(content.querySelectorAll('[data-word-id]'));
+    };
 
-    if (!startId || !endId) return;
+    const getWordElementById = (id: string): HTMLElement | null => {
+      return content.querySelector(`[data-word-id="${id}"]`);
+    };
 
-    const orderedIds = orderedWordIdsRef.current;
-    const startIdx = orderedIds.indexOf(startId);
-    const endIdx = orderedIds.indexOf(endId);
-    if (startIdx === -1 || endIdx === -1) return;
+    const updateSelectionHighlight = () => {
+      const allWords = getAllWordElements();
+      const startId = dragStartIdRef.current;
+      const endId = dragEndIdRef.current;
 
-    const minIdx = Math.min(startIdx, endIdx);
-    const maxIdx = Math.max(startIdx, endIdx);
+      // Clear all selections
+      allWords.forEach(el => el.classList.remove('selecting'));
 
-    for (let i = minIdx; i <= maxIdx; i++) {
-      const info = wordMapRef.current.get(orderedIds[i]);
-      if (info) {
-        info.element.classList.add('selecting');
+      if (!startId || !endId) return;
+
+      const startEl = getWordElementById(startId);
+      const endEl = getWordElementById(endId);
+      if (!startEl || !endEl) return;
+
+      const startIdx = allWords.indexOf(startEl);
+      const endIdx = allWords.indexOf(endEl);
+      if (startIdx === -1 || endIdx === -1) return;
+
+      const minIdx = Math.min(startIdx, endIdx);
+      const maxIdx = Math.max(startIdx, endIdx);
+
+      for (let i = minIdx; i <= maxIdx; i++) {
+        allWords[i].classList.add('selecting');
       }
-    }
-  }, []);
+    };
 
-  // Handle drag end - trigger translation
-  const finishDrag = useCallback(() => {
-    if (!isDraggingRef.current) return;
+    const finishDrag = () => {
+      const allWords = getAllWordElements();
+      const startId = dragStartIdRef.current;
+      const endId = dragEndIdRef.current;
 
-    const startId = dragStartIdRef.current;
-    const endId = dragEndIdRef.current;
+      // Clear highlighting
+      allWords.forEach(el => el.classList.remove('selecting'));
 
-    if (startId && endId) {
-      const orderedIds = orderedWordIdsRef.current;
-      const startIdx = orderedIds.indexOf(startId);
-      const endIdx = orderedIds.indexOf(endId);
+      if (!startId || !endId) {
+        isDraggingRef.current = false;
+        dragStartIdRef.current = null;
+        dragEndIdRef.current = null;
+        return;
+      }
+
+      const startEl = getWordElementById(startId);
+      const endEl = getWordElementById(endId);
+      if (!startEl || !endEl) {
+        isDraggingRef.current = false;
+        dragStartIdRef.current = null;
+        dragEndIdRef.current = null;
+        return;
+      }
+
+      const startIdx = allWords.indexOf(startEl);
+      const endIdx = allWords.indexOf(endEl);
 
       if (startIdx !== -1 && endIdx !== -1) {
         const minIdx = Math.min(startIdx, endIdx);
         const maxIdx = Math.max(startIdx, endIdx);
-        const selectedIds = orderedIds.slice(minIdx, maxIdx + 1);
+        const selectedElements = allWords.slice(minIdx, maxIdx + 1);
 
-        if (selectedIds.length > 0) {
-          const words = selectedIds
-            .map(id => wordMapRef.current.get(id)?.word)
+        if (selectedElements.length > 0) {
+          const words = selectedElements
+            .map(el => el.textContent)
             .filter(Boolean)
             .join(' ');
 
-          const firstWordInfo = wordMapRef.current.get(selectedIds[0]);
-          const sentence = firstWordInfo?.sentence || '';
+          const sentence = selectedElements[0].getAttribute('data-sentence') || '';
 
-          const elements = selectedIds
-            .map(id => wordMapRef.current.get(id)?.element)
-            .filter(Boolean) as HTMLSpanElement[];
+          const firstRect = selectedElements[0].getBoundingClientRect();
+          const lastRect = selectedElements[selectedElements.length - 1].getBoundingClientRect();
+          const position = {
+            x: (firstRect.left + lastRect.right) / 2,
+            y: Math.max(firstRect.bottom, lastRect.bottom) + 8,
+          };
 
-          if (elements.length > 0) {
-            const firstRect = elements[0].getBoundingClientRect();
-            const lastRect = elements[elements.length - 1].getBoundingClientRect();
-            const position = {
-              x: (firstRect.left + lastRect.right) / 2,
-              y: Math.max(firstRect.bottom, lastRect.bottom) + 8,
-            };
-
-            onWordClick(words, sentence, position);
-          }
+          onWordClick(words, sentence, position);
         }
       }
-    }
 
-    // Clear selection highlighting
-    wordMapRef.current.forEach((info) => {
-      info.element.classList.remove('selecting');
-    });
-
-    isDraggingRef.current = false;
-    dragStartIdRef.current = null;
-    dragEndIdRef.current = null;
-  }, [onWordClick]);
-
-  // Set up mouse event listeners on the content area
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
+      isDraggingRef.current = false;
+      dragStartIdRef.current = null;
+      dragEndIdRef.current = null;
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
       const wordId = getWordIdFromElement(e.target as Element);
@@ -143,7 +141,9 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
     };
 
     const preventSelection = (e: Event) => {
-      e.preventDefault();
+      if (isDraggingRef.current) {
+        e.preventDefault();
+      }
     };
 
     content.addEventListener('mousedown', handleMouseDown);
@@ -157,68 +157,9 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
       content.removeEventListener('selectstart', preventSelection);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [getWordIdFromElement, updateSelectionHighlight, finishDrag]);
+  }, [onWordClick]);
 
-  // Build ordered word list and render content
-  const content = (() => {
-    const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
-    wordMapRef.current.clear();
-    orderedWordIdsRef.current = [];
-
-    return paragraphs.map((paragraph, pIndex) => {
-      const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
-
-      return (
-        <p key={pIndex}>
-          {sentences.map((sentence, sIndex) => {
-            const tokens = sentence.match(/[\w\u00C0-\u024F]+|[^\w\s]/g) || [];
-
-            return (
-              <span key={sIndex}>
-                {tokens.map((token, tIndex) => {
-                  const isWord = /[\w\u00C0-\u024F]/.test(token);
-
-                  if (isWord) {
-                    const wordId = `${pIndex}-${sIndex}-${tIndex}`;
-                    const isSaved = savedWords.includes(token.toLowerCase());
-                    orderedWordIdsRef.current.push(wordId);
-
-                    return (
-                      <span
-                        key={tIndex}
-                        data-word-id={wordId}
-                        ref={(el) => {
-                          if (el) {
-                            wordMapRef.current.set(wordId, {
-                              word: token,
-                              sentence: sentence.trim(),
-                              element: el,
-                            });
-                          }
-                        }}
-                        className={`word ${isSaved ? 'saved' : ''}`}
-                      >
-                        {token}
-                      </span>
-                    );
-                  }
-
-                  return <span key={tIndex}>{token}</span>;
-                }).reduce((acc: React.ReactNode[], curr, idx) => {
-                  if (idx === 0) return [curr];
-                  const prev = tokens[idx - 1];
-                  const current = tokens[idx];
-                  if (/^[.!?,;:)]/.test(current)) return [...acc, curr];
-                  if (/^[(]$/.test(prev)) return [...acc, curr];
-                  return [...acc, ' ', curr];
-                }, [])}
-              </span>
-            );
-          })}
-        </p>
-      );
-    });
-  })();
+  const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
 
   return (
     <article className="article-container">
@@ -231,7 +172,50 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
       </header>
 
       <div className="article-content" ref={contentRef}>
-        {content}
+        {paragraphs.map((paragraph, pIndex) => {
+          const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
+
+          return (
+            <p key={pIndex}>
+              {sentences.map((sentence, sIndex) => {
+                const tokens = sentence.match(/[\w\u00C0-\u024F]+|[^\w\s]/g) || [];
+
+                return (
+                  <span key={sIndex}>
+                    {tokens.map((token, tIndex) => {
+                      const isWord = /[\w\u00C0-\u024F]/.test(token);
+
+                      if (isWord) {
+                        const wordId = `${pIndex}-${sIndex}-${tIndex}`;
+                        const isSaved = savedWords.includes(token.toLowerCase());
+
+                        return (
+                          <span
+                            key={tIndex}
+                            data-word-id={wordId}
+                            data-sentence={sentence.trim()}
+                            className={`word ${isSaved ? 'saved' : ''}`}
+                          >
+                            {token}
+                          </span>
+                        );
+                      }
+
+                      return <span key={tIndex}>{token}</span>;
+                    }).reduce((acc: React.ReactNode[], curr, idx) => {
+                      if (idx === 0) return [curr];
+                      const prev = tokens[idx - 1];
+                      const current = tokens[idx];
+                      if (/^[.!?,;:)]/.test(current)) return [...acc, curr];
+                      if (/^[(]$/.test(prev)) return [...acc, curr];
+                      return [...acc, ' ', curr];
+                    }, [])}
+                  </span>
+                );
+              })}
+            </p>
+          );
+        })}
       </div>
     </article>
   );
