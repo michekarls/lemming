@@ -13,19 +13,21 @@ const anthropic = new Anthropic();
 // Strip citation tags from web search results
 function stripCitations(text: string): string {
   return text
-    // HTML-style citation tags
-    .replace(/<cite[^>]*>/g, '')
-    .replace(/<\/cite>/g, '')
-    .replace(/<source[^>]*>/g, '')
-    .replace(/<\/source>/g, '')
+    // HTML-style citation tags - replace with space
+    .replace(/<cite[^>]*>.*?<\/cite>/g, ' ')
+    .replace(/<cite[^>]*>/g, ' ')
+    .replace(/<\/cite>/g, ' ')
+    .replace(/<source[^>]*>.*?<\/source>/g, ' ')
+    .replace(/<source[^>]*>/g, ' ')
+    .replace(/<\/source>/g, ' ')
     // Unicode bracket citations like 【1†source】
-    .replace(/【[^】]*】/g, '')
+    .replace(/【[^】]*】/g, ' ')
     // Square bracket citations like [1], [1,2], [source]
-    .replace(/\[\d+(?:,\s*\d+)*\]/g, '')
-    .replace(/\[citation needed\]/gi, '')
+    .replace(/\[\d+(?:,\s*\d+)*\]/g, ' ')
+    .replace(/\[citation needed\]/gi, ' ')
     // Superscript-style references
-    .replace(/\^\[\d+\]/g, '')
-    // Clean up spacing
+    .replace(/\^\[\d+\]/g, ' ')
+    // Clean up spacing - collapse multiple spaces to single
     .replace(/\s{2,}/g, ' ')
     .trim();
 }

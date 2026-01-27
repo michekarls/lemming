@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { Article } from '../types';
 
 interface ArticleReaderProps {
@@ -7,89 +7,175 @@ interface ArticleReaderProps {
   savedWords: string[];
 }
 
-function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
-  // Track if we just handled a selection to prevent double-firing
-  const justHandledSelection = useRef(false);
+interface WordInfo {
+  id: string;
+  word: string;
+  sentence: string;
+  paragraphIndex: number;
+  sentenceIndex: number;
+  tokenIndex: number;
+}
 
-  // Find the sentence context from a selection or element
-  const findSentenceContext = useCallback((element: Element | null): string => {
-    // Walk up to find the sentence span (direct child of <p>)
-    let current = element;
-    while (current && current.parentElement?.tagName !== 'P') {
-      current = current.parentElement;
-    }
-    return current?.textContent?.trim() || '';
+function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const wordMapRef = useRef<Map<string, WordInfo>>(new Map());
+  const wordElementsRef = useRef<Map<string, HTMLSpanElement>>(new Map());
+  const dragStartId = useRef<string | null>(null);
+
+  // Build ordered list of word IDs for range selection
+  const getOrderedWordIds = useCallback(() => {
+    const ids: string[] = [];
+    const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
+    paragraphs.forEach((paragraph, pIndex) => {
+      const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
+      sentences.forEach((sentence, sIndex) => {
+        const tokens = sentence.match(/[\w\u00C0-\u024F]+|[^\w\s]/g) || [];
+        tokens.forEach((token, tIndex) => {
+          if (/[\w\u00C0-\u024F]/.test(token)) {
+            ids.push(`${pIndex}-${sIndex}-${tIndex}`);
+          }
+        });
+      });
+    });
+    return ids;
+  }, [article.spanishContent]);
+
+  // Get all word IDs between two IDs (inclusive)
+  const getWordIdsBetween = useCallback((startId: string, endId: string) => {
+    const orderedIds = getOrderedWordIds();
+    const startIdx = orderedIds.indexOf(startId);
+    const endIdx = orderedIds.indexOf(endId);
+    if (startIdx === -1 || endIdx === -1) return new Set<string>();
+
+    const minIdx = Math.min(startIdx, endIdx);
+    const maxIdx = Math.max(startIdx, endIdx);
+    return new Set(orderedIds.slice(minIdx, maxIdx + 1));
+  }, [getOrderedWordIds]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent, wordId: string) => {
+    e.preventDefault(); // Prevent native text selection
+    setIsDragging(true);
+    dragStartId.current = wordId;
+    setSelectedWordIds(new Set([wordId]));
   }, []);
 
+  const handleMouseEnter = useCallback((wordId: string) => {
+    if (isDragging && dragStartId.current) {
+      const newSelection = getWordIdsBetween(dragStartId.current, wordId);
+      setSelectedWordIds(newSelection);
+    }
+  }, [isDragging, getWordIdsBetween]);
+
   const handleMouseUp = useCallback(() => {
-    const selection = window.getSelection();
-    const selectedText = selection?.toString().trim();
+    if (isDragging && selectedWordIds.size > 0) {
+      // Get the selected words in order
+      const orderedIds = getOrderedWordIds();
+      const selectedOrdered = orderedIds.filter(id => selectedWordIds.has(id));
 
-    if (selectedText && selectedText.length > 0) {
-      // User selected text (phrase or word)
-      const range = selection?.getRangeAt(0);
-      if (range) {
-        const rect = range.getBoundingClientRect();
-        const position = {
-          x: rect.left + rect.width / 2,
-          y: rect.bottom + 8,
-        };
-        // Get sentence context from the start of the selection
-        const sentence = findSentenceContext(range.startContainer.parentElement);
-        onWordClick(selectedText, sentence, position);
-        selection?.removeAllRanges();
+      if (selectedOrdered.length > 0) {
+        // Build the phrase from selected words
+        const words = selectedOrdered
+          .map(id => wordMapRef.current.get(id)?.word)
+          .filter(Boolean)
+          .join(' ');
 
-        // Prevent the subsequent click event from firing
-        justHandledSelection.current = true;
-        setTimeout(() => { justHandledSelection.current = false; }, 0);
+        // Get sentence context from the first selected word
+        const firstWordInfo = wordMapRef.current.get(selectedOrdered[0]);
+        const sentence = firstWordInfo?.sentence || '';
+
+        // Calculate position from the selection bounds
+        const elements = selectedOrdered
+          .map(id => wordElementsRef.current.get(id))
+          .filter(Boolean) as HTMLSpanElement[];
+
+        if (elements.length > 0) {
+          const firstRect = elements[0].getBoundingClientRect();
+          const lastRect = elements[elements.length - 1].getBoundingClientRect();
+          const position = {
+            x: (firstRect.left + lastRect.right) / 2,
+            y: Math.max(firstRect.bottom, lastRect.bottom) + 8,
+          };
+
+          onWordClick(words, sentence, position);
+        }
       }
     }
-  }, [onWordClick, findSentenceContext]);
+
+    setIsDragging(false);
+    setSelectedWordIds(new Set());
+    dragStartId.current = null;
+  }, [isDragging, selectedWordIds, getOrderedWordIds, onWordClick]);
 
   const handleWordClick = useCallback((
     e: React.MouseEvent<HTMLSpanElement>,
     word: string,
     sentence: string
   ) => {
-    // Skip if we just handled a selection in mouseUp
-    if (justHandledSelection.current) {
-      return;
+    // Only handle if not dragging (single click)
+    if (!isDragging && selectedWordIds.size === 0) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position = {
+        x: rect.left + rect.width / 2,
+        y: rect.bottom + 8,
+      };
+      onWordClick(word, sentence, position);
     }
+  }, [isDragging, selectedWordIds.size, onWordClick]);
 
-    // Single word click
-    const rect = e.currentTarget.getBoundingClientRect();
-    const position = {
-      x: rect.left + rect.width / 2,
-      y: rect.bottom + 8,
+  // Global mouseup listener to handle mouseup outside the component
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDragging) {
+        handleMouseUp();
+      }
     };
-    onWordClick(word, sentence, position);
-  }, [onWordClick]);
+
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isDragging, handleMouseUp]);
 
   const renderContent = () => {
     const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
+    wordMapRef.current.clear();
 
     return paragraphs.map((paragraph, pIndex) => {
-      // Split paragraph into sentences (rough approximation)
       const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
 
       return (
         <p key={pIndex}>
           {sentences.map((sentence, sIndex) => {
-            // Split sentence into words while preserving punctuation
             const tokens = sentence.match(/[\w\u00C0-\u024F]+|[^\w\s]/g) || [];
 
             return (
               <span key={sIndex}>
                 {tokens.map((token, tIndex) => {
-                  // Check if token is a word (contains letters)
                   const isWord = /[\w\u00C0-\u024F]/.test(token);
 
                   if (isWord) {
+                    const wordId = `${pIndex}-${sIndex}-${tIndex}`;
                     const isSaved = savedWords.includes(token.toLowerCase());
+                    const isSelected = selectedWordIds.has(wordId);
+
+                    // Store word info for later lookup
+                    wordMapRef.current.set(wordId, {
+                      id: wordId,
+                      word: token,
+                      sentence: sentence.trim(),
+                      paragraphIndex: pIndex,
+                      sentenceIndex: sIndex,
+                      tokenIndex: tIndex,
+                    });
+
                     return (
                       <span
                         key={tIndex}
-                        className={`word ${isSaved ? 'saved' : ''}`}
+                        ref={(el) => {
+                          if (el) wordElementsRef.current.set(wordId, el);
+                        }}
+                        className={`word ${isSaved ? 'saved' : ''} ${isSelected ? 'selecting' : ''}`}
+                        onMouseDown={(e) => handleMouseDown(e, wordId)}
+                        onMouseEnter={() => handleMouseEnter(wordId)}
                         onClick={(e) => handleWordClick(e, token, sentence.trim())}
                       >
                         {token}
@@ -97,16 +183,12 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
                     );
                   }
 
-                  // Punctuation or space
                   return <span key={tIndex}>{token}</span>;
                 }).reduce((acc: React.ReactNode[], curr, idx) => {
-                  // Add spaces between words
                   if (idx === 0) return [curr];
                   const prev = tokens[idx - 1];
                   const current = tokens[idx];
-                  // Don't add space before punctuation
                   if (/^[.!?,;:)]/.test(current)) return [...acc, curr];
-                  // Don't add space after opening punctuation
                   if (/^[(]$/.test(prev)) return [...acc, curr];
                   return [...acc, ' ', curr];
                 }, [])}
@@ -128,7 +210,10 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         </div>
       </header>
 
-      <div className="article-content" onMouseUp={handleMouseUp}>
+      <div
+        className="article-content"
+        style={{ userSelect: 'none' }}
+      >
         {renderContent()}
       </div>
     </article>

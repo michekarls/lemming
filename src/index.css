@@ -212,6 +212,12 @@ body {
   background-color: var(--success-light);
 }
 
+.word.selecting {
+  background-color: var(--primary-light);
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+
 /* Translation Popup */
 .translation-popup {
   position: fixed;
