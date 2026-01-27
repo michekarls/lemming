@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { Article } from '../types';
 
 interface ArticleReaderProps {
@@ -8,6 +8,9 @@ interface ArticleReaderProps {
 }
 
 function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
+  // Track if we just handled a selection to prevent double-firing
+  const justHandledSelection = useRef(false);
+
   // Find the sentence context from a selection or element
   const findSentenceContext = useCallback((element: Element | null): string => {
     // Walk up to find the sentence span (direct child of <p>)
@@ -18,7 +21,7 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
     return current?.textContent?.trim() || '';
   }, []);
 
-  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMouseUp = useCallback(() => {
     const selection = window.getSelection();
     const selectedText = selection?.toString().trim();
 
@@ -35,6 +38,10 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         const sentence = findSentenceContext(range.startContainer.parentElement);
         onWordClick(selectedText, sentence, position);
         selection?.removeAllRanges();
+
+        // Prevent the subsequent click event from firing
+        justHandledSelection.current = true;
+        setTimeout(() => { justHandledSelection.current = false; }, 0);
       }
     }
   }, [onWordClick, findSentenceContext]);
@@ -44,12 +51,8 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
     word: string,
     sentence: string
   ) => {
-    // Only handle single clicks (no selection)
-    const selection = window.getSelection();
-    const selectedText = selection?.toString().trim();
-
-    if (selectedText && selectedText.length > 0) {
-      // Selection will be handled by mouseUp
+    // Skip if we just handled a selection in mouseUp
+    if (justHandledSelection.current) {
       return;
     }
 
