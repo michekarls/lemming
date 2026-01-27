@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useCallback } from 'react';
 import { Article } from '../types';
 
 interface ArticleReaderProps {
@@ -13,151 +13,122 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
   const dragStartIdRef = useRef<string | null>(null);
   const dragEndIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  const getWordIdFromPoint = useCallback((x: number, y: number): string | null => {
+    const element = document.elementFromPoint(x, y);
+    if (!element) return null;
+    const wordEl = element.closest('[data-word-id]');
+    return wordEl?.getAttribute('data-word-id') || null;
+  }, []);
+
+  const updateSelectionHighlight = useCallback(() => {
     const content = contentRef.current;
     if (!content) return;
 
-    const getWordIdFromElement = (element: Element | null): string | null => {
-      if (!element) return null;
-      const wordEl = element.closest('[data-word-id]');
-      return wordEl?.getAttribute('data-word-id') || null;
-    };
+    const allWords = Array.from(content.querySelectorAll('[data-word-id]'));
+    const startId = dragStartIdRef.current;
+    const endId = dragEndIdRef.current;
 
-    const getAllWordElements = (): HTMLElement[] => {
-      return Array.from(content.querySelectorAll('[data-word-id]'));
-    };
+    // Clear all selections
+    allWords.forEach(el => el.classList.remove('selecting'));
 
-    const getWordElementById = (id: string): HTMLElement | null => {
-      return content.querySelector(`[data-word-id="${id}"]`);
-    };
+    if (!startId || !endId) return;
 
-    const updateSelectionHighlight = () => {
-      const allWords = getAllWordElements();
-      const startId = dragStartIdRef.current;
-      const endId = dragEndIdRef.current;
+    const startEl = content.querySelector(`[data-word-id="${startId}"]`);
+    const endEl = content.querySelector(`[data-word-id="${endId}"]`);
+    if (!startEl || !endEl) return;
 
-      // Clear all selections
-      allWords.forEach(el => el.classList.remove('selecting'));
+    const startIdx = allWords.indexOf(startEl);
+    const endIdx = allWords.indexOf(endEl);
+    if (startIdx === -1 || endIdx === -1) return;
 
-      if (!startId || !endId) return;
+    const minIdx = Math.min(startIdx, endIdx);
+    const maxIdx = Math.max(startIdx, endIdx);
 
-      const startEl = getWordElementById(startId);
-      const endEl = getWordElementById(endId);
-      if (!startEl || !endEl) return;
+    for (let i = minIdx; i <= maxIdx; i++) {
+      allWords[i].classList.add('selecting');
+    }
+  }, []);
 
-      const startIdx = allWords.indexOf(startEl);
-      const endIdx = allWords.indexOf(endEl);
-      if (startIdx === -1 || endIdx === -1) return;
+  const finishDrag = useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return;
 
-      const minIdx = Math.min(startIdx, endIdx);
-      const maxIdx = Math.max(startIdx, endIdx);
+    const allWords = Array.from(content.querySelectorAll('[data-word-id]')) as HTMLElement[];
+    const startId = dragStartIdRef.current;
+    const endId = dragEndIdRef.current;
 
-      for (let i = minIdx; i <= maxIdx; i++) {
-        allWords[i].classList.add('selecting');
-      }
-    };
+    // Clear highlighting
+    allWords.forEach(el => el.classList.remove('selecting'));
 
-    const finishDrag = () => {
-      const allWords = getAllWordElements();
-      const startId = dragStartIdRef.current;
-      const endId = dragEndIdRef.current;
+    if (startId && endId) {
+      const startEl = content.querySelector(`[data-word-id="${startId}"]`);
+      const endEl = content.querySelector(`[data-word-id="${endId}"]`);
 
-      // Clear highlighting
-      allWords.forEach(el => el.classList.remove('selecting'));
+      if (startEl && endEl) {
+        const startIdx = allWords.indexOf(startEl as HTMLElement);
+        const endIdx = allWords.indexOf(endEl as HTMLElement);
 
-      if (!startId || !endId) {
-        isDraggingRef.current = false;
-        dragStartIdRef.current = null;
-        dragEndIdRef.current = null;
-        return;
-      }
+        if (startIdx !== -1 && endIdx !== -1) {
+          const minIdx = Math.min(startIdx, endIdx);
+          const maxIdx = Math.max(startIdx, endIdx);
+          const selectedElements = allWords.slice(minIdx, maxIdx + 1);
 
-      const startEl = getWordElementById(startId);
-      const endEl = getWordElementById(endId);
-      if (!startEl || !endEl) {
-        isDraggingRef.current = false;
-        dragStartIdRef.current = null;
-        dragEndIdRef.current = null;
-        return;
-      }
+          if (selectedElements.length > 0) {
+            const words = selectedElements
+              .map(el => el.textContent)
+              .filter(Boolean)
+              .join(' ');
 
-      const startIdx = allWords.indexOf(startEl);
-      const endIdx = allWords.indexOf(endEl);
+            const sentence = selectedElements[0].getAttribute('data-sentence') || '';
 
-      if (startIdx !== -1 && endIdx !== -1) {
-        const minIdx = Math.min(startIdx, endIdx);
-        const maxIdx = Math.max(startIdx, endIdx);
-        const selectedElements = allWords.slice(minIdx, maxIdx + 1);
+            const firstRect = selectedElements[0].getBoundingClientRect();
+            const lastRect = selectedElements[selectedElements.length - 1].getBoundingClientRect();
+            const position = {
+              x: (firstRect.left + lastRect.right) / 2,
+              y: Math.max(firstRect.bottom, lastRect.bottom) + 8,
+            };
 
-        if (selectedElements.length > 0) {
-          const words = selectedElements
-            .map(el => el.textContent)
-            .filter(Boolean)
-            .join(' ');
-
-          const sentence = selectedElements[0].getAttribute('data-sentence') || '';
-
-          const firstRect = selectedElements[0].getBoundingClientRect();
-          const lastRect = selectedElements[selectedElements.length - 1].getBoundingClientRect();
-          const position = {
-            x: (firstRect.left + lastRect.right) / 2,
-            y: Math.max(firstRect.bottom, lastRect.bottom) + 8,
-          };
-
-          onWordClick(words, sentence, position);
+            onWordClick(words, sentence, position);
+          }
         }
       }
+    }
 
-      isDraggingRef.current = false;
-      dragStartIdRef.current = null;
-      dragEndIdRef.current = null;
-    };
-
-    const handleMouseDown = (e: MouseEvent) => {
-      const wordId = getWordIdFromElement(e.target as Element);
-      if (wordId) {
-        e.preventDefault();
-        isDraggingRef.current = true;
-        dragStartIdRef.current = wordId;
-        dragEndIdRef.current = wordId;
-        updateSelectionHighlight();
-      }
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current) return;
-
-      const wordId = getWordIdFromElement(e.target as Element);
-      if (wordId && wordId !== dragEndIdRef.current) {
-        dragEndIdRef.current = wordId;
-        updateSelectionHighlight();
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (isDraggingRef.current) {
-        finishDrag();
-      }
-    };
-
-    const preventSelection = (e: Event) => {
-      if (isDraggingRef.current) {
-        e.preventDefault();
-      }
-    };
-
-    content.addEventListener('mousedown', handleMouseDown);
-    content.addEventListener('mousemove', handleMouseMove);
-    content.addEventListener('selectstart', preventSelection);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      content.removeEventListener('mousedown', handleMouseDown);
-      content.removeEventListener('mousemove', handleMouseMove);
-      content.removeEventListener('selectstart', preventSelection);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
+    isDraggingRef.current = false;
+    dragStartIdRef.current = null;
+    dragEndIdRef.current = null;
   }, [onWordClick]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const wordId = getWordIdFromPoint(e.clientX, e.clientY);
+    if (wordId) {
+      e.preventDefault();
+      isDraggingRef.current = true;
+      dragStartIdRef.current = wordId;
+      dragEndIdRef.current = wordId;
+      updateSelectionHighlight();
+    }
+  }, [getWordIdFromPoint, updateSelectionHighlight]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+
+    const wordId = getWordIdFromPoint(e.clientX, e.clientY);
+    if (wordId && wordId !== dragEndIdRef.current) {
+      dragEndIdRef.current = wordId;
+      updateSelectionHighlight();
+    }
+  }, [getWordIdFromPoint, updateSelectionHighlight]);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDraggingRef.current) {
+      finishDrag();
+    }
+  }, [finishDrag]);
+
+  const handleMouseLeave = useCallback(() => {
+    // Don't cancel drag when leaving - user might come back
+  }, []);
 
   const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
 
@@ -171,7 +142,14 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         </div>
       </header>
 
-      <div className="article-content" ref={contentRef}>
+      <div
+        className="article-content"
+        ref={contentRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+      >
         {paragraphs.map((paragraph, pIndex) => {
           const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
 
