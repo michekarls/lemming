@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import { Article } from '../types';
 
 interface ArticleReaderProps {
@@ -8,85 +8,80 @@ interface ArticleReaderProps {
 }
 
 interface WordInfo {
-  id: string;
   word: string;
   sentence: string;
-  paragraphIndex: number;
-  sentenceIndex: number;
-  tokenIndex: number;
+  element: HTMLSpanElement;
 }
 
 function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps) {
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const contentRef = useRef<HTMLDivElement>(null);
   const wordMapRef = useRef<Map<string, WordInfo>>(new Map());
-  const wordElementsRef = useRef<Map<string, HTMLSpanElement>>(new Map());
-  const dragStartId = useRef<string | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartIdRef = useRef<string | null>(null);
+  const dragEndIdRef = useRef<string | null>(null);
+  const orderedWordIdsRef = useRef<string[]>([]);
 
-  // Build ordered list of word IDs for range selection
-  const getOrderedWordIds = useCallback(() => {
-    const ids: string[] = [];
-    const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
-    paragraphs.forEach((paragraph, pIndex) => {
-      const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
-      sentences.forEach((sentence, sIndex) => {
-        const tokens = sentence.match(/[\w\u00C0-\u024F]+|[^\w\s]/g) || [];
-        tokens.forEach((token, tIndex) => {
-          if (/[\w\u00C0-\u024F]/.test(token)) {
-            ids.push(`${pIndex}-${sIndex}-${tIndex}`);
-          }
-        });
-      });
+  // Update selection highlighting
+  const updateSelectionHighlight = useCallback(() => {
+    const startId = dragStartIdRef.current;
+    const endId = dragEndIdRef.current;
+
+    // Clear all selections first
+    wordMapRef.current.forEach((info) => {
+      info.element.classList.remove('selecting');
     });
-    return ids;
-  }, [article.spanishContent]);
 
-  // Get all word IDs between two IDs (inclusive)
-  const getWordIdsBetween = useCallback((startId: string, endId: string) => {
-    const orderedIds = getOrderedWordIds();
+    if (!startId || !endId) return;
+
+    const orderedIds = orderedWordIdsRef.current;
     const startIdx = orderedIds.indexOf(startId);
     const endIdx = orderedIds.indexOf(endId);
-    if (startIdx === -1 || endIdx === -1) return new Set<string>();
+    if (startIdx === -1 || endIdx === -1) return;
 
     const minIdx = Math.min(startIdx, endIdx);
     const maxIdx = Math.max(startIdx, endIdx);
-    return new Set(orderedIds.slice(minIdx, maxIdx + 1));
-  }, [getOrderedWordIds]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent, wordId: string) => {
-    e.preventDefault(); // Prevent native text selection
-    setIsDragging(true);
-    dragStartId.current = wordId;
-    setSelectedWordIds(new Set([wordId]));
+    for (let i = minIdx; i <= maxIdx; i++) {
+      const info = wordMapRef.current.get(orderedIds[i]);
+      if (info) {
+        info.element.classList.add('selecting');
+      }
+    }
   }, []);
 
-  const handleMouseEnter = useCallback((wordId: string) => {
-    if (isDragging && dragStartId.current) {
-      const newSelection = getWordIdsBetween(dragStartId.current, wordId);
-      setSelectedWordIds(newSelection);
+  // Handle drag end - trigger translation
+  const handleDragEnd = useCallback(() => {
+    const startId = dragStartIdRef.current;
+    const endId = dragEndIdRef.current;
+
+    if (!startId || !endId) {
+      isDraggingRef.current = false;
+      return;
     }
-  }, [isDragging, getWordIdsBetween]);
 
-  const handleMouseUp = useCallback(() => {
-    if (isDragging && selectedWordIds.size > 0) {
-      // Get the selected words in order
-      const orderedIds = getOrderedWordIds();
-      const selectedOrdered = orderedIds.filter(id => selectedWordIds.has(id));
+    const orderedIds = orderedWordIdsRef.current;
+    const startIdx = orderedIds.indexOf(startId);
+    const endIdx = orderedIds.indexOf(endId);
 
-      if (selectedOrdered.length > 0) {
+    if (startIdx !== -1 && endIdx !== -1) {
+      const minIdx = Math.min(startIdx, endIdx);
+      const maxIdx = Math.max(startIdx, endIdx);
+      const selectedIds = orderedIds.slice(minIdx, maxIdx + 1);
+
+      if (selectedIds.length > 0) {
         // Build the phrase from selected words
-        const words = selectedOrdered
+        const words = selectedIds
           .map(id => wordMapRef.current.get(id)?.word)
           .filter(Boolean)
           .join(' ');
 
         // Get sentence context from the first selected word
-        const firstWordInfo = wordMapRef.current.get(selectedOrdered[0]);
+        const firstWordInfo = wordMapRef.current.get(selectedIds[0]);
         const sentence = firstWordInfo?.sentence || '';
 
         // Calculate position from the selection bounds
-        const elements = selectedOrdered
-          .map(id => wordElementsRef.current.get(id))
+        const elements = selectedIds
+          .map(id => wordMapRef.current.get(id)?.element)
           .filter(Boolean) as HTMLSpanElement[];
 
         if (elements.length > 0) {
@@ -102,18 +97,64 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
       }
     }
 
-    setIsDragging(false);
-    setSelectedWordIds(new Set());
-    dragStartId.current = null;
-  }, [isDragging, selectedWordIds, getOrderedWordIds, onWordClick]);
+    // Clear selection highlighting
+    wordMapRef.current.forEach((info) => {
+      info.element.classList.remove('selecting');
+    });
+
+    isDraggingRef.current = false;
+    dragStartIdRef.current = null;
+    dragEndIdRef.current = null;
+  }, [onWordClick]);
+
+  // Global mouseup listener
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDraggingRef.current) {
+        handleDragEnd();
+      }
+    };
+
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [handleDragEnd]);
+
+  // Prevent native selection
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const preventSelection = (e: Event) => {
+      e.preventDefault();
+    };
+
+    content.addEventListener('selectstart', preventSelection);
+    return () => content.removeEventListener('selectstart', preventSelection);
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent, wordId: string) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartIdRef.current = wordId;
+    dragEndIdRef.current = wordId;
+    updateSelectionHighlight();
+  }, [updateSelectionHighlight]);
+
+  const handleMouseEnter = useCallback((wordId: string) => {
+    if (isDraggingRef.current) {
+      dragEndIdRef.current = wordId;
+      updateSelectionHighlight();
+    }
+  }, [updateSelectionHighlight]);
 
   const handleWordClick = useCallback((
     e: React.MouseEvent<HTMLSpanElement>,
     word: string,
     sentence: string
   ) => {
-    // Only handle if not dragging (single click)
-    if (!isDragging && selectedWordIds.size === 0) {
+    // Only handle single clicks when not dragging across multiple words
+    if (dragStartIdRef.current === dragEndIdRef.current && dragStartIdRef.current !== null) {
+      // Single word was clicked (start and end are the same)
       const rect = e.currentTarget.getBoundingClientRect();
       const position = {
         x: rect.left + rect.width / 2,
@@ -121,23 +162,12 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
       };
       onWordClick(word, sentence, position);
     }
-  }, [isDragging, selectedWordIds.size, onWordClick]);
+  }, [onWordClick]);
 
-  // Global mouseup listener to handle mouseup outside the component
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      if (isDragging) {
-        handleMouseUp();
-      }
-    };
-
-    document.addEventListener('mouseup', handleGlobalMouseUp);
-    return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
-  }, [isDragging, handleMouseUp]);
-
-  const renderContent = () => {
+  const renderContent = useCallback(() => {
     const paragraphs = article.spanishContent.split('\n\n').filter(p => p.trim());
     wordMapRef.current.clear();
+    orderedWordIdsRef.current = [];
 
     return paragraphs.map((paragraph, pIndex) => {
       const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [paragraph];
@@ -155,25 +185,21 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
                   if (isWord) {
                     const wordId = `${pIndex}-${sIndex}-${tIndex}`;
                     const isSaved = savedWords.includes(token.toLowerCase());
-                    const isSelected = selectedWordIds.has(wordId);
-
-                    // Store word info for later lookup
-                    wordMapRef.current.set(wordId, {
-                      id: wordId,
-                      word: token,
-                      sentence: sentence.trim(),
-                      paragraphIndex: pIndex,
-                      sentenceIndex: sIndex,
-                      tokenIndex: tIndex,
-                    });
+                    orderedWordIdsRef.current.push(wordId);
 
                     return (
                       <span
                         key={tIndex}
                         ref={(el) => {
-                          if (el) wordElementsRef.current.set(wordId, el);
+                          if (el) {
+                            wordMapRef.current.set(wordId, {
+                              word: token,
+                              sentence: sentence.trim(),
+                              element: el,
+                            });
+                          }
                         }}
-                        className={`word ${isSaved ? 'saved' : ''} ${isSelected ? 'selecting' : ''}`}
+                        className={`word ${isSaved ? 'saved' : ''}`}
                         onMouseDown={(e) => handleMouseDown(e, wordId)}
                         onMouseEnter={() => handleMouseEnter(wordId)}
                         onClick={(e) => handleWordClick(e, token, sentence.trim())}
@@ -198,7 +224,7 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         </p>
       );
     });
-  };
+  }, [article.spanishContent, savedWords, handleMouseDown, handleMouseEnter, handleWordClick]);
 
   return (
     <article className="article-container">
@@ -210,10 +236,7 @@ function ArticleReader({ article, onWordClick, savedWords }: ArticleReaderProps)
         </div>
       </header>
 
-      <div
-        className="article-content"
-        style={{ userSelect: 'none' }}
-      >
+      <div className="article-content" ref={contentRef}>
         {renderContent()}
       </div>
     </article>

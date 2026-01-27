@@ -13,13 +13,11 @@ const anthropic = new Anthropic();
 // Strip citation tags from web search results
 function stripCitations(text: string): string {
   return text
-    // HTML-style citation tags - replace with space
-    .replace(/<cite[^>]*>.*?<\/cite>/g, ' ')
-    .replace(/<cite[^>]*>/g, ' ')
-    .replace(/<\/cite>/g, ' ')
-    .replace(/<source[^>]*>.*?<\/source>/g, ' ')
-    .replace(/<source[^>]*>/g, ' ')
-    .replace(/<\/source>/g, ' ')
+    // Spaced citation tags like < cite index = " 14 - 4 " >
+    .replace(/<\s*cite[^>]*>/gi, ' ')
+    .replace(/<\s*\/\s*cite\s*>/gi, ' ')
+    .replace(/<\s*source[^>]*>/gi, ' ')
+    .replace(/<\s*\/\s*source\s*>/gi, ' ')
     // Unicode bracket citations like 【1†source】
     .replace(/【[^】]*】/g, ' ')
     // Square bracket citations like [1], [1,2], [source]
