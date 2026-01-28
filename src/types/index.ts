@@ -20,3 +20,29 @@ export interface TranslationResult {
   context: string;
   contextTranslation: string;
 }
+
+// Story types
+export interface StoryPage {
+  content: string;
+  pageNumber: number;
+}
+
+export interface StoryChapter {
+  title: string;
+  chapterNumber: number;
+  pages: StoryPage[];
+}
+
+export interface Story {
+  id: string;
+  title: string;
+  author?: string;
+  description?: string;
+  chapters: StoryChapter[];
+  totalPages: number;
+}
+
+// Translation cache
+export interface TranslationCache {
+  [key: string]: TranslationResult; // key is `${word}:${sentenceContext}`
+}

@@ -1,18 +1,40 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Article, VocabWord, TranslationResult } from './types';
-import ArticleReader from './components/ArticleReader';
+import { Story, VocabWord, TranslationResult, TranslationCache } from './types';
+import StoryReader from './components/StoryReader';
 import VocabularySidebar from './components/VocabularySidebar';
 import TranslationPopup from './components/TranslationPopup';
+import {
+  loadTranslationCache,
+  saveTranslationCache,
+  getCachedTranslation,
+  cacheTranslation,
+} from './utils/translationCache';
+import { parseStoryMarkdown } from './utils/storyParser';
+
+// Import stories
+import proyectoAnochecerMd from './stories/proyecto_anochecer.md?raw';
 
 const VOCAB_STORAGE_KEY = 'lemming-vocabulary';
+const READING_PROGRESS_KEY = 'lemming-reading-progress';
+
+// Parse available stories
+const STORIES: Story[] = [
+  parseStoryMarkdown(proyectoAnochecerMd, 'proyecto-anochecer'),
+];
+
+interface ReadingProgress {
+  storyId: string;
+  chapterIndex: number;
+  pageIndex: number;
+}
 
 function App() {
-  const [article, setArticle] = useState<Article | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [topic, setTopic] = useState('');
+  const [currentStory, setCurrentStory] = useState<Story | null>(null);
+  const [chapterIndex, setChapterIndex] = useState(0);
+  const [pageIndex, setPageIndex] = useState(0);
 
   const [vocabulary, setVocabulary] = useState<VocabWord[]>([]);
+  const [translationCache, setTranslationCache] = useState<TranslationCache>({});
 
   const [selectedWord, setSelectedWord] = useState<{
     word: string;
@@ -22,14 +44,32 @@ function App() {
   const [translation, setTranslation] = useState<TranslationResult | null>(null);
   const [translating, setTranslating] = useState(false);
 
-  // Load vocabulary from localStorage on mount
+  // Load vocabulary and cache from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(VOCAB_STORAGE_KEY);
-    if (saved) {
+    const savedVocab = localStorage.getItem(VOCAB_STORAGE_KEY);
+    if (savedVocab) {
       try {
-        setVocabulary(JSON.parse(saved));
+        setVocabulary(JSON.parse(savedVocab));
       } catch {
         console.error('Failed to parse saved vocabulary');
+      }
+    }
+
+    setTranslationCache(loadTranslationCache());
+
+    // Load reading progress
+    const savedProgress = localStorage.getItem(READING_PROGRESS_KEY);
+    if (savedProgress) {
+      try {
+        const progress: ReadingProgress = JSON.parse(savedProgress);
+        const story = STORIES.find(s => s.id === progress.storyId);
+        if (story) {
+          setCurrentStory(story);
+          setChapterIndex(progress.chapterIndex);
+          setPageIndex(progress.pageIndex);
+        }
+      } catch {
+        console.error('Failed to parse reading progress');
       }
     }
   }, []);
@@ -39,31 +79,28 @@ function App() {
     localStorage.setItem(VOCAB_STORAGE_KEY, JSON.stringify(vocabulary));
   }, [vocabulary]);
 
-  const fetchArticle = async (searchTopic?: string) => {
-    setLoading(true);
-    setError(null);
-    setArticle(null);
-
-    try {
-      const response = await fetch('/api/fetch-article', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: searchTopic || topic || undefined }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch article');
-      }
-
-      const data = await response.json();
-      setArticle(data);
-    } catch (err) {
-      setError('Failed to fetch article. Please try again.');
-      console.error(err);
-    } finally {
-      setLoading(false);
+  // Save reading progress
+  useEffect(() => {
+    if (currentStory) {
+      const progress: ReadingProgress = {
+        storyId: currentStory.id,
+        chapterIndex,
+        pageIndex,
+      };
+      localStorage.setItem(READING_PROGRESS_KEY, JSON.stringify(progress));
     }
+  }, [currentStory, chapterIndex, pageIndex]);
+
+  const handleSelectStory = (story: Story) => {
+    setCurrentStory(story);
+    setChapterIndex(0);
+    setPageIndex(0);
   };
+
+  const handlePageChange = useCallback((newChapter: number, newPage: number) => {
+    setChapterIndex(newChapter);
+    setPageIndex(newPage);
+  }, []);
 
   const handleWordClick = useCallback(async (
     word: string,
@@ -72,6 +109,14 @@ function App() {
   ) => {
     setSelectedWord({ word, sentence, position });
     setTranslation(null);
+
+    // Check cache first
+    const cached = getCachedTranslation(translationCache, word, sentence);
+    if (cached) {
+      setTranslation(cached);
+      return;
+    }
+
     setTranslating(true);
 
     try {
@@ -85,8 +130,13 @@ function App() {
         throw new Error('Failed to translate');
       }
 
-      const data = await response.json();
+      const data: TranslationResult = await response.json();
       setTranslation(data);
+
+      // Cache the translation
+      const newCache = cacheTranslation(translationCache, word, sentence, data);
+      setTranslationCache(newCache);
+      saveTranslationCache(newCache);
     } catch (err) {
       console.error('Translation error:', err);
       setTranslation({
@@ -98,7 +148,7 @@ function App() {
     } finally {
       setTranslating(false);
     }
-  }, []);
+  }, [translationCache]);
 
   const handleClosePopup = useCallback(() => {
     setSelectedWord(null);
@@ -115,7 +165,6 @@ function App() {
     };
 
     setVocabulary(prev => {
-      // Don't add duplicates (same word + same context)
       const exists = prev.some(
         v => v.spanish.toLowerCase() === newVocab.spanish.toLowerCase() &&
              v.context === newVocab.context
@@ -138,64 +187,52 @@ function App() {
       <div className="main-content">
         <header className="header">
           <h1>Lemming</h1>
-          <p>Learn Spanish by reading real news articles</p>
+          <p>Learn Spanish by reading stories</p>
         </header>
 
-        <section className="topic-section">
-          <form
-            className="topic-form"
-            onSubmit={(e) => { e.preventDefault(); fetchArticle(); }}
-          >
-            <input
-              type="text"
-              className="topic-input"
-              placeholder="Enter a topic (e.g., technology, sports, climate)..."
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              disabled={loading}
-            />
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={loading}
-            >
-              {loading ? 'Loading...' : 'Get Article'}
-            </button>
-          </form>
-        </section>
-
-        {error && (
-          <div className="error">{error}</div>
+        {!currentStory && (
+          <section className="story-selection">
+            <h2>Select a Story</h2>
+            <div className="story-list">
+              {STORIES.map(story => (
+                <button
+                  key={story.id}
+                  className="story-card"
+                  onClick={() => handleSelectStory(story)}
+                >
+                  <h3>{story.title}</h3>
+                  {story.author && <p className="story-card-author">por {story.author}</p>}
+                  <p className="story-card-info">
+                    {story.chapters.length} {story.chapters.length === 1 ? 'chapter' : 'chapters'} • {story.totalPages} pages
+                  </p>
+                </button>
+              ))}
+            </div>
+          </section>
         )}
 
-        {loading && (
-          <div className="loading">
-            <div className="spinner" />
-            <p>Fetching and translating article...</p>
-            <small>This may take a moment</small>
-          </div>
-        )}
-
-        {article && !loading && (
+        {currentStory && (
           <>
+            <div className="story-actions">
+              <button
+                className="btn btn-secondary btn-small"
+                onClick={() => setCurrentStory(null)}
+              >
+                ← Back to stories
+              </button>
+            </div>
             <div className="hint">
               Click on any word to see its English translation
             </div>
-            <ArticleReader
-              article={article}
+            <StoryReader
+              story={currentStory}
+              chapterIndex={chapterIndex}
+              pageIndex={pageIndex}
               onWordClick={handleWordClick}
+              onPageChange={handlePageChange}
               savedWords={savedWords}
             />
           </>
-        )}
-
-        {!article && !loading && !error && (
-          <div className="article-container">
-            <div className="empty-state">
-              <h3>Ready to practice your Spanish?</h3>
-              <p>Enter a topic above or click "Get Article" for a random news story.</p>
-            </div>
-          </div>
         )}
 
         {selectedWord && (
