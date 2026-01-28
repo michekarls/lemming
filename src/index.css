@@ -189,6 +189,7 @@ body {
   -moz-user-select: none;
   -ms-user-select: none;
   user-select: none;
+  cursor: default;
 }
 
 .article-content p {
@@ -206,6 +207,10 @@ body {
   transition: background-color 0.15s;
   padding: 0 2px;
   margin: 0 -2px;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
 
 .word:hover {
